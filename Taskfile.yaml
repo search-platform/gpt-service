@@ -1,0 +1,36 @@
+version: '3'
+
+vars:
+  VERSION: "0.0.1"
+  TARGETARCH: "amd64"
+  GOPATH:
+    sh: go env GOPATH
+  GOBIN:
+    sh: go env GOBIN
+  DSN: postgres://postgres:123456@localhost:5432/search-platform?sslmode=disable
+  ENV: dev
+
+dotenv: ['.env']
+
+tasks:
+  proto:
+    cmds:
+      - echo ">> generating code from proto files"
+      - |
+        protoc \
+        -I. \
+        --go_out=. --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative \
+        --go-vtproto_opt=paths=source_relative \
+        --plugin protoc-gen-go="{{.GOBIN}}/protoc-gen-go" \
+        --go-grpc_out=. --plugin protoc-gen-go-grpc="{{.GOBIN}}/protoc-gen-go-grpc" \
+        --go-vtproto_out=. --plugin protoc-gen-go-vtproto="{{.GOBIN}}/protoc-gen-go-vtproto" \
+        --go-vtproto_opt=pool=go.greenpl.ru/iot/api/protocol.Message \
+        --go-vtproto_opt=pool=go.greenpl.ru/iot/api/protocol.Samples \
+        --go-vtproto_opt=features=marshal+unmarshal+size+pool \
+        {{.PROTOFILES | catLines}}
+    vars:
+      PROTOFILES:
+        sh: find api -iname "*.proto"
+  migrate:
+    cmds:
+      - go run ./cmd/gpt-service/migration --dsn {{.DSN}} {{.CLI_ARGS}}

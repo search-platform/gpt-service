@@ -1,0 +1,36 @@
+syntax = "proto3";
+package api.errors;
+
+option go_package = "github.com/search-platform/gpt-service/api/errdetails";
+
+message ErrorInfo {
+  // The reason of the error. This is a constant value that identifies the
+  // proximate cause of the error. Error reasons are unique within a particular
+  // domain of errors. This should be at most 63 characters and match a
+  // regular expression of `[A-Z][A-Z0-9_]+[A-Z0-9]`, which represents
+  // UPPER_SNAKE_CASE.
+  string reason = 1;
+
+  string description = 2;
+
+  map<string, string> metadata = 3;
+}
+
+message BadRequest {
+  enum FieldViolationType {
+    REQUIRED = 0;
+    NOT_VALID = 1;
+    UNIQUE = 2;
+  }
+
+  message FieldViolation {
+    string field = 1;
+    FieldViolationType type = 2;
+    string description = 3;
+  }
+
+  repeated FieldViolation field_violations = 1;
+}
+
+
+
