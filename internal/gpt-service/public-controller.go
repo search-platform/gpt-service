@@ -17,7 +17,7 @@ func NewPublicController(gptService api.GptServiceServer) *PublicController {
 }
 
 func (s *PublicController) RegisterController(app *fiber.App) {
-	app.Get("/health")
+	app.Get("/health", s.Health)
 	gpt := app.Group("gpt")
 	gpt.Get("/", s.Health)
 }

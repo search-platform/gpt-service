@@ -25,10 +25,10 @@ func main() {
 func registerHTTP(
 	lfc fx.Lifecycle,
 	srv *httpserver.Server,
-	lpc *gptservice.PublicController,
+	gpc *gptservice.PublicController,
 ) {
 	// srv.RegisterMiddleware()
-	lpc.RegisterController(srv.App())
+	gpc.RegisterController(srv.App())
 
 	lfc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {

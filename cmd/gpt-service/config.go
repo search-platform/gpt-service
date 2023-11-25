@@ -22,6 +22,7 @@ func NewAppConfig() (cfg AppConfig, err error) {
 	cfg.DBConfig = &db.DBConfig{}
 	cfg.GptServiceConfig = &gptservice.ServiceConfig{}
 	cfg.GRPC = &grpcserver.Config{}
+	cfg.Config = &httpserver.Config{}
 	ep := config.RealEnvParser{}
 	if err := config.Parse(ep, &cfg); err != nil {
 		return cfg, err
