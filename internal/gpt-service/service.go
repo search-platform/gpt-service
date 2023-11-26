@@ -27,7 +27,7 @@ func NewService(cfg *ServiceConfig, db *bun.DB) (*Service, error) {
 	return &Service{
 		cfg:     *cfg,
 		db:      db,
-		gptRepo: gptrepository.NewGptRepo(cfg.ApiKey),
+		gptRepo: gptrepository.NewGptRepo(cfg.ApiKey, cfg.CustomSearchApiKey, cfg.CustomSearchCX),
 	}, nil
 }
 

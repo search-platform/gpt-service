@@ -27,15 +27,19 @@ type BankWebsite struct {
 }
 
 type GptRepo struct {
-	ApiKey string
-	client *openai.Client
+	ApiKey             string
+	CustomSearchApiKey string
+	CustomSearchCX     string
+	client             *openai.Client
 }
 
-func NewGptRepo(apiKey string) *GptRepo {
+func NewGptRepo(apiKey, customSearchApiKey, customSearchCX string) *GptRepo {
 	client := openai.NewClient(apiKey)
 	return &GptRepo{
-		ApiKey: apiKey,
-		client: client,
+		ApiKey:             apiKey,
+		client:             client,
+		CustomSearchApiKey: customSearchApiKey,
+		CustomSearchCX:     customSearchCX,
 	}
 }
 
@@ -154,8 +158,6 @@ func (gpt *GptRepo) GetBankInfo(ctx context.Context, bankName, country string) (
 }
 
 func (gpt *GptRepo) SearchBankWebsites(ctx context.Context, bankName, country, target string) ([]BankWebsite, error) {
-	apiKey := "AIzaSyA2Lsg8gMg9lBCQHUlT8qFO35LQaai3OLg"
-	cx := "a3b9e97770c424185"
 
 	instruction := "Мне нужен JSON с полями `website`: official_bank_domain_name, `contacts`: слова телефон email на языке страны " + country
 	instruction += "для банка " + bankName + ", ты должен заменить official_bank_domain_name на доменное имя банка" + bankName
@@ -196,7 +198,7 @@ func (gpt *GptRepo) SearchBankWebsites(ctx context.Context, bankName, country, t
 	query := fmt.Sprintf("site:%s %s", bankQuery.Website, bankQuery.Contacts)
 
 	// Создание URL запроса
-	searchURL := fmt.Sprintf("https://www.googleapis.com/customsearch/v1?q=%s&cx=%s&key=%s", url.QueryEscape(query), cx, apiKey)
+	searchURL := fmt.Sprintf("https://www.googleapis.com/customsearch/v1?q=%s&cx=%s&key=%s", url.QueryEscape(query), gpt.CustomSearchCX, gpt.CustomSearchApiKey)
 
 	// Выполнение HTTP запроса
 	resp, err := http.Get(searchURL)
@@ -303,19 +305,19 @@ func (gpt *GptRepo) ScrapePageContent(ctx context.Context, url string) (string, 
 
 func removeStyleTags(input string) (string, error) {
 	// Компилируем регулярное выражение для поиска тегов <style>
-	re, err := regexp.Compile(`<style.*?</style>`)
+	// re, err := regexp.Compile(`<style.*?</style>`)
+	// if err != nil {
+	// 	return "", err
+	// }
+
+	// // Заменяем все найденные вхождения на пустую строку
+	// result := re.ReplaceAllString(input, "")
+
+	re, err := regexp.Compile(`<script.*?</script>`)
 	if err != nil {
 		return "", err
 	}
-
-	// Заменяем все найденные вхождения на пустую строку
 	result := re.ReplaceAllString(input, "")
-
-	re, err = regexp.Compile(`<script.*?</script>`)
-	if err != nil {
-		return "", err
-	}
-	result = re.ReplaceAllString(result, "")
 
 	return result, nil
 }
