@@ -6,6 +6,7 @@ require (
 	github.com/caarlos0/env/v6 v6.10.1
 	github.com/gocolly/colly v1.2.0
 	github.com/gofiber/fiber/v2 v2.51.0
+	github.com/k3a/html2text v1.2.1
 	github.com/rs/zerolog v1.31.0
 	github.com/sashabaranov/go-openai v1.17.9
 	github.com/uptrace/bun v1.1.16

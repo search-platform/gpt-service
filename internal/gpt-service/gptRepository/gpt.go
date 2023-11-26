@@ -3,7 +3,6 @@ package gptrepository
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -11,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gocolly/colly"
+	"github.com/k3a/html2text"
 	"github.com/rs/zerolog/log"
 	"github.com/search-platform/gpt-service/internal/gpt-service/models"
 
@@ -22,6 +21,7 @@ import (
 type BankWebsite struct {
 	Title string `json:"title"`
 	Link  string `json:"link"`
+	Icon  string `json:"icon"`
 }
 
 type GptRepo struct {
@@ -40,24 +40,30 @@ func NewGptRepo(apiKey string) *GptRepo {
 // Prompt отправляет запрос в OpenAI и возвращает ответ
 func (gpt *GptRepo) GetBankInfo(ctx context.Context, bankName, country string) (*models.BankDetails, error) {
 
-	sites, err := gpt.SearchBankWebsites(ctx, bankName, country)
+	sitesWithPhone, err := gpt.SearchBankWebsites(ctx, bankName, country, "phone")
 	if err != nil {
 		return nil, err
 	}
-
-	sites = sites[:len(sites)/2]
-
+	if len(sitesWithPhone) > 5 {
+		sitesWithPhone = sitesWithPhone[:5]
+	}
 	var banks []models.BankDetails
 
-	for _, site := range sites {
+	for _, site := range sitesWithPhone {
 		content, err := gpt.ScrapePageContent(ctx, site.Link)
 		if err != nil {
 			log.Error().AnErr("search error", err)
 			continue
 		}
-		instruction := "Найди контактные данные банка на странице, представь их в JSON формате. Мне нужны контактные данные только конкретной страны: " + country
+		bankJson, err := json.Marshal(site)
+		if err != nil {
+			return nil, err
+		}
+		instruction := "Найди контактные данные банка в тексте."
+		instruction += "У меня есть некоторые данные для тебя по этому банку: " + string(bankJson)
+		instruction += "Ты должен представить их обязательно в JSON формате. Нельзя ничего сообщать, кроме JSON ответа. "
 		instruction += "{ \"url\": \"\", \"name\": \"\", \"country\": \"\", \"logo_link\": \"\", \"favicon_link\": \"\", \"address\": \"\", \"contacts\": [{\"type\": \"\", \"description\": \"\", \"value\": \"\"}] }"
-		instruction += "Type может быть только PHONE (поставить 0) или EMAIL (поставить 1). Информация с сайта ниже: " + content
+		instruction += "Type может быть только PHONE или EMAIL. Я запрещаю возвращать данные, которых нет на странице. Информация с сайта ниже: " + content
 
 		// Ограничение длины запроса
 		maxLength := 4096
@@ -68,7 +74,7 @@ func (gpt *GptRepo) GetBankInfo(ctx context.Context, bankName, country string) (
 		resp, err := gpt.client.CreateChatCompletion(
 			ctx,
 			openai.ChatCompletionRequest{
-				Model: openai.GPT3Dot5Turbo,
+				Model: openai.GPT4TurboPreview,
 				Messages: []openai.ChatCompletionMessage{
 					{
 						Role:    openai.ChatMessageRoleUser,
@@ -80,26 +86,101 @@ func (gpt *GptRepo) GetBankInfo(ctx context.Context, bankName, country string) (
 		if err != nil {
 			return nil, err
 		}
-		fmt.Println(resp.Choices[0].Message.Content)
+		rawData := resp.Choices[0].Message.Content
+
+		prefix := "```json"
+		suffix := "```"
+		// Уберем префикс
+		rawData = strings.TrimPrefix(rawData, prefix)
+		// Уберем постфикс
+		rawData = strings.TrimSuffix(rawData, suffix)
+
+		fmt.Println(rawData)
 		bankDetails := models.BankDetails{}
-		err = json.Unmarshal([]byte(resp.Choices[0].Message.Content), &bankDetails)
+		err = json.Unmarshal([]byte(rawData), &bankDetails)
 		if err != nil {
 			fmt.Println(err)
 		}
 		banks = append(banks, bankDetails)
 	}
 
-	if len(banks) > 0 {
-		return &banks[0], nil
-	} else {
-		return nil, errors.New("no banks found")
+	jsonBanks, err := json.Marshal(banks)
+	if err != nil {
+		return nil, err
 	}
+
+	instruction := "Я тебе передаю массив с данными банка " + bankName + " в стране " + country
+	instruction += "Тебе запрещено писать что-либо, кроме JSON. Твоя задача: сделать один наиболее вероятный объект с данными банка в JSON, используй в том числе собственную базу знаний: "
+	instruction += "{ \"url\": \"\", \"name\": \"\", \"country\": \"\", \"logo_link\": \"\", \"favicon_link\": \"\", \"address\": \"\", \"contacts\": [{\"type\": \"\", \"description\": \"\", \"value\": \"\"}] }"
+	instruction += " Известные данные банка: " + string(jsonBanks)
+
+	resp, err := gpt.client.CreateChatCompletion(
+		ctx,
+		openai.ChatCompletionRequest{
+			Model: openai.GPT4TurboPreview,
+			Messages: []openai.ChatCompletionMessage{
+				{
+					Role:    openai.ChatMessageRoleUser,
+					Content: instruction,
+				},
+			},
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	rawData := resp.Choices[0].Message.Content
+
+	prefix := "```json"
+	suffix := "```"
+	// Уберем префикс
+	rawData = strings.TrimPrefix(rawData, prefix)
+	// Уберем постфикс
+	rawData = strings.TrimSuffix(rawData, suffix)
+
+	fmt.Println(rawData)
+
+	bankDetails := models.BankDetails{}
+	err = json.Unmarshal([]byte(rawData), &bankDetails)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return &bankDetails, nil
 }
 
-func (gpt *GptRepo) SearchBankWebsites(ctx context.Context, bankName, country string) ([]BankWebsite, error) {
+func (gpt *GptRepo) SearchBankWebsites(ctx context.Context, bankName, country, target string) ([]BankWebsite, error) {
 	apiKey := "AIzaSyA2Lsg8gMg9lBCQHUlT8qFO35LQaai3OLg"
 	cx := "a3b9e97770c424185"
-	query := fmt.Sprintf("official site bank %s %s contacts", bankName, country)
+
+	instruction := "Мне нужен JSON с полями `website`: official_bank_domain_name, `contacts`: слово contacts на языке страны " + country
+	instruction += "для банка " + bankName + ", ты должен заменить official_bank_domain_name на доменное имя банка" + bankName
+	instruction += " в этой стране в ответном JSON. "
+	instruction += " Запрещено писать что то кроме этого JSON в ответе"
+	gptResp, err := gpt.client.CreateChatCompletion(
+		ctx,
+		openai.ChatCompletionRequest{
+			Model: openai.GPT4TurboPreview,
+			Messages: []openai.ChatCompletionMessage{
+				{
+					Role:    openai.ChatMessageRoleUser,
+					Content: instruction,
+				},
+			},
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var bankQuery struct {
+		Website  string `json:"website"`
+		Contacts string `json:"contacts"`
+	}
+
+	json.Unmarshal([]byte(gptResp.Choices[0].Message.Content), &bankQuery)
+
+	query := fmt.Sprintf("site:%s %s", bankQuery.Website, bankQuery.Contacts)
 
 	// Создание URL запроса
 	searchURL := fmt.Sprintf("https://www.googleapis.com/customsearch/v1?q=%s&cx=%s&key=%s", url.QueryEscape(query), cx, apiKey)
@@ -117,10 +198,17 @@ func (gpt *GptRepo) SearchBankWebsites(ctx context.Context, bankName, country st
 		return nil, err
 	}
 
+	fmt.Printf("google response: %s", string(body))
+
 	var result struct {
 		Items []struct {
-			Title string `json:"title"`
-			Link  string `json:"link"`
+			Title   string `json:"title"`
+			Link    string `json:"link"`
+			PageMap struct {
+				CSEThumbnail []struct {
+					Src string `json:"src"`
+				} `json:"cse_thumbnail"`
+			} `json:"pagemap"`
 		} `json:"items"`
 	}
 
@@ -132,61 +220,84 @@ func (gpt *GptRepo) SearchBankWebsites(ctx context.Context, bankName, country st
 	// Преобразование результатов в BankWebsite
 	var websites []BankWebsite
 	for _, item := range result.Items {
+		iconURL := ""
+		if len(item.PageMap.CSEThumbnail) > 0 {
+			iconURL = item.PageMap.CSEThumbnail[0].Src
+		}
 		websites = append(websites, BankWebsite{
 			Title: item.Title,
 			Link:  item.Link,
+			Icon:  iconURL,
 		})
 	}
 
 	return websites, nil
 }
 
-// ScrapePageContent посещает указанный URL и извлекает его содержимое
 func (gpt *GptRepo) ScrapePageContent(ctx context.Context, url string) (string, error) {
-	// Создаем новый экземпляр коллектора
-	c := colly.NewCollector()
+	// Создаем HTTP клиент
+	client := &http.Client{}
 
-	var contentBuilder strings.Builder
-
-	// Фильтрация ненужных элементов
-	c.OnHTML("h1, h2, h3, h4, h5, h6", func(e *colly.HTMLElement) {
-		contentBuilder.WriteString(e.Text + " ")
-	})
-
-	// Устанавливаем обработчик для элементов HTML
-	// Здесь можно настроить селекторы для конкретных элементов, если нужно
-	c.OnHTML("body", func(e *colly.HTMLElement) {
-		contentBuilder.WriteString(e.Text)
-	})
-
-	// Обработка ошибок
-	c.OnError(func(r *colly.Response, err error) {
-		fmt.Println("Request URL:", r.Request.URL, "failed with response", "\nError:", err)
-	})
-
-	// Посещаем URL
-	err := c.Visit(url)
+	// Создаем запрос
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", err
 	}
 
-	processedContent := preprocessText(contentBuilder.String())
+	// Выполняем запрос
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
 
-	// Возвращаем всё содержимое страницы в виде строки
+	// Читаем ответ
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	strBody := preprocessText(string(body))
+
+	strBody = strings.ReplaceAll(strBody, "<>", "")
+	strBody, err = removeStyleTags(strBody)
+	if err != nil {
+		return "", err
+	}
+
+	// Конвертируем HTML в текст
+	processedContent := html2text.HTML2Text(strBody)
+	if err != nil {
+		return "", err
+	}
+
 	return processedContent, nil
 }
 
-// func (gpt *GptRepo) GoogleQuery(ctx context.Context, req string) (string, error) {
-// 	instruction := ""
+func removeStyleTags(input string) (string, error) {
+	// Компилируем регулярное выражение для поиска тегов <style>
+	re, err := regexp.Compile(`<style.*?</style>`)
+	if err != nil {
+		return "", err
+	}
 
-// }
+	// Заменяем все найденные вхождения на пустую строку
+	result := re.ReplaceAllString(input, "")
 
-// func (gpt *GptRepo) ParseWebsite(ctx context.Context, url string) (string, error) {
+	re, err = regexp.Compile(`<script.*?</script>`)
+	if err != nil {
+		return "", err
+	}
+	result = re.ReplaceAllString(result, "")
 
-// }
+	return result, nil
+}
 
 func preprocessText(text string) string {
 	// Удаление лишних пробелов и символов переноса строки
-	cleanText := regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+	compact := strings.ReplaceAll(text, "\n", "")
+	compact = strings.Join(strings.Fields(compact), " ")
+
+	cleanText := regexp.MustCompile(`\s+`).ReplaceAllString(compact, " ")
 	return strings.TrimSpace(cleanText)
 }
