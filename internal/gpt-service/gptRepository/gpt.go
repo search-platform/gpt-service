@@ -3,6 +3,7 @@ package gptrepository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/gocolly/colly"
 	"github.com/k3a/html2text"
 	"github.com/rs/zerolog/log"
 	"github.com/search-platform/gpt-service/internal/gpt-service/models"
@@ -44,13 +46,13 @@ func (gpt *GptRepo) GetBankInfo(ctx context.Context, bankName, country string) (
 	if err != nil {
 		return nil, err
 	}
-	if len(sitesWithPhone) > 5 {
-		sitesWithPhone = sitesWithPhone[:5]
+	if len(sitesWithPhone) > 3 {
+		sitesWithPhone = sitesWithPhone[:3]
 	}
 	var banks []models.BankDetails
 
 	for _, site := range sitesWithPhone {
-		content, err := gpt.ScrapePageContent(ctx, site.Link)
+		content, favicon, err := gpt.ScrapePageContent(ctx, site.Link)
 		if err != nil {
 			log.Error().AnErr("search error", err)
 			continue
@@ -61,6 +63,8 @@ func (gpt *GptRepo) GetBankInfo(ctx context.Context, bankName, country string) (
 		}
 		instruction := "Найди контактные данные банка в тексте."
 		instruction += "У меня есть некоторые данные для тебя по этому банку: " + string(bankJson)
+		instruction += "Вот вероятная ссылка на favicon: " + favicon
+		instruction += ". Также, очень важно найти ссылку на логотип компании в html документе"
 		instruction += "Ты должен представить их обязательно в JSON формате. Нельзя ничего сообщать, кроме JSON ответа. "
 		instruction += "{ \"url\": \"\", \"name\": \"\", \"country\": \"\", \"logo_link\": \"\", \"favicon_link\": \"\", \"address\": \"\", \"contacts\": [{\"type\": \"\", \"description\": \"\", \"value\": \"\"}] }"
 		instruction += "Type может быть только PHONE или EMAIL. Я запрещаю возвращать данные, которых нет на странице. Информация с сайта ниже: " + content
@@ -153,7 +157,7 @@ func (gpt *GptRepo) SearchBankWebsites(ctx context.Context, bankName, country, t
 	apiKey := "AIzaSyA2Lsg8gMg9lBCQHUlT8qFO35LQaai3OLg"
 	cx := "a3b9e97770c424185"
 
-	instruction := "Мне нужен JSON с полями `website`: official_bank_domain_name, `contacts`: слово contacts на языке страны " + country
+	instruction := "Мне нужен JSON с полями `website`: official_bank_domain_name, `contacts`: слова телефон email на языке страны " + country
 	instruction += "для банка " + bankName + ", ты должен заменить official_bank_domain_name на доменное имя банка" + bankName
 	instruction += " в этой стране в ответном JSON. "
 	instruction += " Запрещено писать что то кроме этого JSON в ответе"
@@ -178,7 +182,16 @@ func (gpt *GptRepo) SearchBankWebsites(ctx context.Context, bankName, country, t
 		Contacts string `json:"contacts"`
 	}
 
-	json.Unmarshal([]byte(gptResp.Choices[0].Message.Content), &bankQuery)
+	jsonGptResp := gptResp.Choices[0].Message.Content
+
+	prefix := "```json"
+	suffix := "```"
+	// Уберем префикс
+	jsonGptResp = strings.TrimPrefix(jsonGptResp, prefix)
+	// Уберем постфикс
+	jsonGptResp = strings.TrimSuffix(jsonGptResp, suffix)
+
+	json.Unmarshal([]byte(jsonGptResp), &bankQuery)
 
 	query := fmt.Sprintf("site:%s %s", bankQuery.Website, bankQuery.Contacts)
 
@@ -234,44 +247,58 @@ func (gpt *GptRepo) SearchBankWebsites(ctx context.Context, bankName, country, t
 	return websites, nil
 }
 
-func (gpt *GptRepo) ScrapePageContent(ctx context.Context, url string) (string, error) {
-	// Создаем HTTP клиент
-	client := &http.Client{}
+func (gpt *GptRepo) ScrapePageContent(ctx context.Context, url string) (string, string, error) {
+	// Инициализация коллектора Colly
+	c := colly.NewCollector(
+		colly.Async(true),
+	)
 
-	// Создаем запрос
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return "", err
+	var content, favicon string
+
+	// Обработка ошибок
+	c.OnError(func(_ *colly.Response, err error) {
+		content = ""
+		favicon = ""
+	})
+
+	// Обработка HTML для получения контента
+	c.OnHTML("body", func(e *colly.HTMLElement) {
+		rawHtml := e.DOM.ParentsUntil("~").Text()
+
+		// Обработка и преобразование HTML в текст
+		processedHtml := preprocessText(rawHtml)
+		processedHtml = strings.ReplaceAll(processedHtml, "<>", "")
+		processedHtml, err := removeStyleTags(processedHtml)
+		if err != nil {
+			content = ""
+			return
+		}
+		content = html2text.HTML2Text(processedHtml)
+	})
+
+	// Извлекаем Favicon
+	c.OnHTML("link[rel='icon'], link[rel='shortcut icon']", func(e *colly.HTMLElement) {
+		favicon = e.Attr("href")
+		if !strings.HasPrefix(favicon, "http") {
+			favicon = e.Request.AbsoluteURL(favicon)
+		}
+	})
+
+	// Отправляем запрос
+	c.Visit(url)
+
+	// Ожидаем завершения всех асинхронных операций
+	c.Wait()
+
+	if content == "" || favicon == "" {
+		return "", "", errors.New("Failed to scrape the content or favicon")
 	}
 
-	// Выполняем запрос
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+	content = preprocessText(content)
 
-	// Читаем ответ
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
+	// fmt.Println(content)
 
-	strBody := preprocessText(string(body))
-
-	strBody = strings.ReplaceAll(strBody, "<>", "")
-	strBody, err = removeStyleTags(strBody)
-	if err != nil {
-		return "", err
-	}
-
-	// Конвертируем HTML в текст
-	processedContent := html2text.HTML2Text(strBody)
-	if err != nil {
-		return "", err
-	}
-
-	return processedContent, nil
+	return content, favicon, nil
 }
 
 func removeStyleTags(input string) (string, error) {
@@ -296,6 +323,7 @@ func removeStyleTags(input string) (string, error) {
 func preprocessText(text string) string {
 	// Удаление лишних пробелов и символов переноса строки
 	compact := strings.ReplaceAll(text, "\n", "")
+	compact = strings.ReplaceAll(compact, "\r", "")
 	compact = strings.Join(strings.Fields(compact), " ")
 
 	cleanText := regexp.MustCompile(`\s+`).ReplaceAllString(compact, " ")
