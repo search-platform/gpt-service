@@ -1,13 +1,13 @@
 syntax = "proto3";
-
 package api.bankinfo;
 
 option go_package = "github.com/search-platform/gpt-service/api/gpt";
 
+
 // The bank information service definition.
 service GptService {
   // Sends a request to find bank information
-  rpc FindBankInformation (FindBankInformationRequest) returns (FindBankInformationResponse);
+  rpc FindBankInformation (FindBankInformationRequest) returns (BankInfo);
 }
 
 // The request message containing the bank's name and country.
@@ -16,23 +16,22 @@ message FindBankInformationRequest {
   string country = 2;
 }
 
-// The response message containing the bank's details.
-message FindBankInformationResponse {
-  message Contacts {
+message BankInfo {
+    string url = 1;
+    string name = 2;
+    string country = 3;
+    string logo_link = 4;
+    string favicon_link = 5;
+    string address = 6;
+    repeated Contact contacts = 7; // List of contacts
+}
+
+message Contact {
     enum Type {
-      PHONE = 0;
-      EMAIL = 1;
+        PHONE = 0;
+        EMAIL = 1;
     }
     Type type = 1;
     string description = 2; // Description about the contact's department
     string value = 3; // Contact details
-  }
-
-  string url = 1;
-  string name = 2;
-  string country = 3;
-  string logo_link = 4;
-  string favicon_link = 5;
-  string address = 6;
-  repeated Contacts contacts = 7; // List of contacts
 }
