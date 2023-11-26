@@ -2,9 +2,13 @@ package gptservice
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/rs/zerolog/log"
 	api "github.com/search-platform/gpt-service/api/gpt"
 	gptrepository "github.com/search-platform/gpt-service/internal/gpt-service/gptRepository"
+	"github.com/search-platform/gpt-service/internal/pkg/errdetails"
+
 	"github.com/uptrace/bun"
 )
 
@@ -27,6 +31,24 @@ func NewService(cfg *ServiceConfig, db *bun.DB) (*Service, error) {
 	}, nil
 }
 
-func (s *Service) FindBankInformation(ctx context.Context, req *api.FindBankInformationRequest) (*api.FindBankInformationResponse, error) {
-	return nil, nil
+func (s *Service) FindBankInformation(ctx context.Context, req *api.FindBankInformationRequest) (*api.BankInfo, error) {
+	errg := errdetails.NewBadRequestBuilder()
+	if req.Country == "" {
+		errg.Required("Country", "country is required")
+	}
+	if req.Name == "" {
+		errg.Required("Name", "name is required")
+	}
+	if errg.NotEmpty() {
+		return nil, errg.AsError()
+	}
+
+	bank, err := s.gptRepo.GetBankInfo(ctx, req.Name, req.Country)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Info().Msg(fmt.Sprintf("got bank info: %v", bank))
+
+	return bank.ToAPI(), nil
 }

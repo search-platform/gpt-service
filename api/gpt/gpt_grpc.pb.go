@@ -23,7 +23,7 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type GptServiceClient interface {
 	// Sends a request to find bank information
-	FindBankInformation(ctx context.Context, in *FindBankInformationRequest, opts ...grpc.CallOption) (*FindBankInformationResponse, error)
+	FindBankInformation(ctx context.Context, in *FindBankInformationRequest, opts ...grpc.CallOption) (*BankInfo, error)
 }
 
 type gptServiceClient struct {
@@ -34,8 +34,8 @@ func NewGptServiceClient(cc grpc.ClientConnInterface) GptServiceClient {
 	return &gptServiceClient{cc}
 }
 
-func (c *gptServiceClient) FindBankInformation(ctx context.Context, in *FindBankInformationRequest, opts ...grpc.CallOption) (*FindBankInformationResponse, error) {
-	out := new(FindBankInformationResponse)
+func (c *gptServiceClient) FindBankInformation(ctx context.Context, in *FindBankInformationRequest, opts ...grpc.CallOption) (*BankInfo, error) {
+	out := new(BankInfo)
 	err := c.cc.Invoke(ctx, "/api.bankinfo.GptService/FindBankInformation", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func (c *gptServiceClient) FindBankInformation(ctx context.Context, in *FindBank
 // for forward compatibility
 type GptServiceServer interface {
 	// Sends a request to find bank information
-	FindBankInformation(context.Context, *FindBankInformationRequest) (*FindBankInformationResponse, error)
+	FindBankInformation(context.Context, *FindBankInformationRequest) (*BankInfo, error)
 	mustEmbedUnimplementedGptServiceServer()
 }
 
@@ -56,7 +56,7 @@ type GptServiceServer interface {
 type UnimplementedGptServiceServer struct {
 }
 
-func (UnimplementedGptServiceServer) FindBankInformation(context.Context, *FindBankInformationRequest) (*FindBankInformationResponse, error) {
+func (UnimplementedGptServiceServer) FindBankInformation(context.Context, *FindBankInformationRequest) (*BankInfo, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FindBankInformation not implemented")
 }
 func (UnimplementedGptServiceServer) mustEmbedUnimplementedGptServiceServer() {}
