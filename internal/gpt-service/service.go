@@ -1,7 +1,10 @@
 package gptservice
 
 import (
+	"context"
+
 	api "github.com/search-platform/gpt-service/api/gpt"
+	gptrepository "github.com/search-platform/gpt-service/internal/gpt-service/gptRepository"
 	"github.com/uptrace/bun"
 )
 
@@ -12,12 +15,18 @@ type Service struct {
 
 	cfg ServiceConfig
 
-	db *bun.DB
+	db      *bun.DB
+	gptRepo *gptrepository.GptRepo
 }
 
 func NewService(cfg *ServiceConfig, db *bun.DB) (*Service, error) {
 	return &Service{
-		cfg: *cfg,
-		db:  db,
+		cfg:     *cfg,
+		db:      db,
+		gptRepo: gptrepository.NewGptRepo(cfg.ApiKey),
 	}, nil
+}
+
+func (s *Service) FindBankInformation(ctx context.Context, req *api.FindBankInformationRequest) (*api.FindBankInformationResponse, error) {
+	return nil, nil
 }

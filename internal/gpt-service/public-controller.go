@@ -25,3 +25,12 @@ func (s *PublicController) RegisterController(app *fiber.App) {
 func (s *PublicController) Health(ctx *fiber.Ctx) error {
 	return nil
 }
+
+func (s *PublicController) FindBankInformation(c *fiber.Ctx) error {
+	req := &api.FindBankInformationRequest{}
+	if err := c.BodyParser(req); err != nil {
+		return fiber.ErrBadRequest
+	}
+
+	return c.SendStatus(fiber.StatusOK)
+}
